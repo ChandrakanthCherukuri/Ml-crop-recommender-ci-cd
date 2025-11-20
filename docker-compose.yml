@@ -1,0 +1,124 @@
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: agroassist-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-changeme}
+      MONGO_INITDB_DATABASE: agroassist
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - agroassist-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend Service
+  backend:
+    build:
+      context: ./AgroAssist/backend
+      dockerfile: Dockerfile
+    container_name: agroassist-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3000
+      MONGODB_URI: ${MONGODB_URI:-mongodb://admin:changeme@mongodb:27017/agroassist?authSource=admin}
+      JWT_SECRET: ${JWT_SECRET:-please-change-this-secret-key}
+      CROP_API_URL: http://crop-recommendation:5000
+      DISEASE_API_URL: http://disease-detection:8000
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ./AgroAssist/backend/src:/app/src
+      - ./AgroAssist/backend/logs:/app/logs
+    networks:
+      - agroassist-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ./AgroAssist/frontend
+      dockerfile: Dockerfile
+    container_name: agroassist-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - crop-recommendation
+      - disease-detection
+    networks:
+      - agroassist-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Crop Recommendation Service
+  crop-recommendation:
+    build:
+      context: ./Crop_Recommendation
+      dockerfile: Dockerfile
+    container_name: agroassist-crop-recommendation
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./Crop_Recommendation/models:/app/models
+    networks:
+      - agroassist-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Disease Detection Service
+  disease-detection:
+    build:
+      context: ./Disease_Detection/Minor Proj
+      dockerfile: Dockerfile
+    container_name: agroassist-disease-detection
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./Disease_Detection/Minor Proj/models:/app/models
+      - ./Disease_Detection/Minor Proj/static/uploads:/app/static/uploads
+    networks:
+      - agroassist-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+networks:
+  agroassist-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
